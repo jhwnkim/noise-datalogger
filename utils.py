@@ -24,5 +24,3 @@ def bcdToInt(chars):
             sum = 10*sum+val
 
     return sum
-
-#class RingBuffer
