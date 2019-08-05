@@ -30,11 +30,13 @@ CHUNK = 1024 * 4
 FORMAT = pyaudio.paInt16
 CHANNELS =  1
 RATE = 44100
+BUFFER_SIZE_SEC = 5
 
 Npts = 500
 wait_sec = 2
 sample_time_sec = 0.20 # estimate of time taken by server to return value
 rescale = True
+sample_time_msec_dt8852 = 10 # sampling time for dt8852
 
 dt8852_params={'IntegrationTime_micros':100000}
 
@@ -47,19 +49,33 @@ stream = pa.open(
     rate = RATE,
     input = True,
     output = True,
-    frames_per_buffer = CHUNK
+    #frames_per_buffer = CHUNK,
+    stream_callback=read_audio
 )
 audio_data = np.zeros(CHUNK//2)
-def read_audio():
-    data = stream.read(CHUNK)
+audio_data_buffer = np.int16(np.zeros(RATE*BUFFER_SIZE_SEC))
+
+# define callback (2)
+def read_audio(in_data, frame_count, time_info, status):
+    global audio_data_buffer
+
+    data = stream.read(frame_count)
+
     #data_int = np.array(struct.unpack(str(2*CHUNK)+'B', data), dtype='b')[::2]+127
-    data_int = np.array(struct.unpack(str(2*CHUNK)+'B', data), dtype='b')[::2]
+    data_int = np.array(struct.unpack(str(frame_count)+'B', data), dtype='b')[::2]
 
-    return np.int16(data_int)
+    frame
+    return (np.int16(data_int), pyaudio.paContinue)
 
-#fig, ax = plt.subplots()
-#ax.plot(data_int, '-')
-#plt.show()
+
+# open stream using callback (3)
+stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
+                channels=wf.getnchannels(),
+                rate=wf.getframerate(),
+                output=True,
+                stream_callback=read_audio)
+
+
 
 # Initialize start_camera
 camera = cv2.VideoCapture(0)
@@ -68,13 +84,17 @@ camera = cv2.VideoCapture(0)
 dt = serial.Serial('COM4', timeout=1.0, write_timeout=1.0)
 dt.write(0x55) # Toggle recording
 
+noise_data_buffer = []
+
+# GUI section
+
 app = QtGui.QApplication([])
 
 ## Define a top-level widget to hold everything
 w = QtGui.QWidget()
 
 ## Create some widgets to be placed inside
-btn_save = QtGui.QPushButton('Start Saving')
+btn_start = QtGui.QPushButton('Start Monitoring')
 
 edit_intTime = QtGui.QLineEdit('{:f}'.format(sample_time_sec))
 btn_setparam = QtGui.QPushButton('Set Sampling time [sec]')
@@ -82,14 +102,15 @@ btn_setdirec = QtGui.QPushButton('Set Data Directory')
 
 statusbar = QtGui.QStatusBar()
 
-pt = pg.PlotWidget()
+# Audio display widgets
+## Time domain
+pt = pg.PlotWidget(title='Time Domain Audio')
 xlabel = pt.setLabel('bottom',text='Sample',units='Arb. Unit')
 ylabel = pt.setLabel('left',text='Counts',units='Arb. Unit')
 pt.setYRange(-128,128, padding=0)
 x = np.arange(0, 2*CHUNK, 2)
-
-
-pf = pg.PlotWidget()
+## Frequency Domain
+pf = pg.PlotWidget(title='Frequency Domain Audio')
 xlabel = pf.setLabel('bottom',text='Frequency',units='Hz')
 ylabel = pf.setLabel('left',text='Counts',units='Arb. Unit')
 pf.setYRange(0,np.iinfo('int16').max)
@@ -98,18 +119,27 @@ pf.enableAutoRange(y=False)
 #pf.setLogMode(x=None, y=True)
 xf = np.linspace(0, RATE, CHUNK)
 
+# Camera image view widget
 imv = pg.ImageView()
 imv.ui.histogram.hide()
 imv.ui.roiBtn.hide()
 imv.ui.menuBtn.hide()
 
+# Sound Level meter Display
+pdBA = pg.PlotWidget(title='Noise Level')
+xlabel = pdBA.setLabel('bottom',text='Date/Time',units='Arb. Unit')
+ylabel = pdBA.setLabel('left',text='Noise Level',units='dBA')
+pdBA.setYRange(0,130, padding=0)
+dtime = np.arange(0, 2*CHUNK, 2)
 
 ## Create a grid layout to manage the widgets size and position
 layout = QtGui.QGridLayout()
 w.setLayout(layout)
 
 ## Add widgets to the layout in their proper positions
-#layout.addWidget(btn_save, 0, 0) # save spectra button
+row_count = 0
+layout.addWidget(btn_start, 0, 0) # start measurement button
+row_count = row_count+1
 
 #layout.addWidget(QtGui.QLabel('Integration Time [usec]'), 2,0)
 #layout.addWidget(edit_intTime, 2, 1)
@@ -118,10 +148,15 @@ w.setLayout(layout)
 
 #layout.addWidget(statusbar, 11,0, 1,10)
 
-layout.addWidget(pf, 0, 2, 4, 8) # Plot on right spans 4x8
-layout.addWidget(pt, 4, 2, 4, 8) # Plot on right spans 4x8
+layout.addWidget(pdBA, row_count, 0, 4, 16)
+row_count = row_count+4
 
-layout.addWidget(imv, 0, 8, 8, 8) # Image view on right
+layout.addWidget(pf, row_count, 0, 4, 8) # Plot on right spans 4x8
+row_count = row_count+4
+layout.addWidget(pt, row_count, 0, 4, 8) # Plot on right spans 4x8
+row_count = row_count -4
+
+layout.addWidget(imv, row_count, 8, 8, 8) # Image view on right
 
 
 
@@ -152,6 +187,9 @@ def refresh_camera_data():
     imv.setImage(image.T)
 
 def refresh_soundmeter_data():
+    global sample_time_msec_dt8852
+    global pdBA
+
     try:
         dt_data = dt.read()
     except:
@@ -160,6 +198,7 @@ def refresh_soundmeter_data():
     #print('DT8852 sent {}'.format(dt_data))
 
     if len(dt_data) > 0:
+
         if ord(dt_data) == 0xa5:
             token = dt.read()
 
@@ -167,10 +206,13 @@ def refresh_soundmeter_data():
                 noise_data = dt.read(2)
                 #print('Sound meter data received {}'.format(noise_data))
                 noise_data_float = float(utils.bcdToInt(noise_data))/10.0
-                print('Sound meter data received : {} dBA'.format(noise_data_float))
+                # print('Sound meter data received : {} dBA'.format(noise_data_float))
+                noise_data_buffer.append(noise_data_float)
+                pdBA.plot(noise_data_buffer)
+                pdBA.setXRange(0, min([len(noise_data_buffer), CHUNK]))
             elif ord(token) == 0x02: # Is in fast motion_detection
-                print('Speed is fast, toggling')
-                dt.write(0x77) # Toggle to slow
+                # print('Speed is fast, toggling')
+                # dt.write(0x77) # Toggle to slow
             elif ord(token) == 0x30: # range is 30-80dB
                 print('Range in 30-80 dB, toggling')
                 dt.write(0x40) # Toggle to auto
@@ -178,8 +220,22 @@ def refresh_soundmeter_data():
                 dt.write(0x40) # Toggle to auto
             elif ord(token) == 0x4c: # range is 80-130dB
                 dt.write(0x40) # Toggle to auto
+
+        # Speed up timer
+        if sample_time_msec_dt8852 ==500:
+            print('speed up dt8852')
+            sample_time_msec_dt8852 = 10
+            timer3.stop()
+            timer3.start(sample_time_msec_dt8852)
     else:
         dt.write(0x55)
+
+        # Slow down timer
+        if sample_time_msec_dt8852 == 10:
+            print('slow down dt8852')
+            sample_time_msec_dt8852 = 500
+            timer3.stop()
+            timer3.start(sample_time_msec_dt8852)
 
 
 
@@ -237,7 +293,7 @@ app.aboutToQuit.connect(exitHandler)
 
 timer.start(sample_time_sec*timer_factor) # in msec
 timer2.start(2*sample_time_sec*timer_factor) # in msec
-timer3.start(10)
+timer3.start(sample_time_msec_dt8852) # in msec
 
 ## Display the widget as a new window
 w.show()
