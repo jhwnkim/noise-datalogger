@@ -18,9 +18,6 @@ from os import path
 import cv2
 import utils
 
-# Serial communication for DT8852
-import serial
-
 
 # backend selection of matplot lib
 #%matplotlib tk
@@ -64,9 +61,6 @@ def read_audio():
 # Initialize start_camera
 camera = cv2.VideoCapture(0)
 
-# Setup serial for communications with dt8852_params
-dt = serial.Serial('COM4', timeout=1.0, write_timeout=1.0)
-dt.write(0x55) # Toggle recording
 
 app = QtGui.QApplication([])
 
@@ -94,8 +88,6 @@ xlabel = pf.setLabel('bottom',text='Frequency',units='Hz')
 ylabel = pf.setLabel('left',text='Counts',units='Arb. Unit')
 pf.setYRange(0,np.iinfo('int16').max)
 pf.setXRange(0, RATE/2)
-pf.enableAutoRange(y=False)
-#pf.setLogMode(x=None, y=True)
 xf = np.linspace(0, RATE, CHUNK)
 
 imv = pg.ImageView()
@@ -136,7 +128,6 @@ def refresh_audio_data():
     except:
         print('Error while reading audio')
         return
-    #audio_spectra = np.log10(np.max([np.abs(fft(audio_data)), 1e-12]))
     audio_spectra = np.abs(fft(audio_data))
 
     pt.plot(x, audio_data, clear=True)
@@ -151,37 +142,6 @@ def refresh_camera_data():
 
     imv.setImage(image.T)
 
-def refresh_soundmeter_data():
-    try:
-        dt_data = dt.read()
-    except:
-        print('Error while receiving data from sound meter')
-        return
-    #print('DT8852 sent {}'.format(dt_data))
-
-    if len(dt_data) > 0:
-        if ord(dt_data) == 0xa5:
-            token = dt.read()
-
-            if ord(token) == 0x0d: # current measurement
-                noise_data = dt.read(2)
-                #print('Sound meter data received {}'.format(noise_data))
-                noise_data_float = float(utils.bcdToInt(noise_data))/10.0
-                print('Sound meter data received : {} dBA'.format(noise_data_float))
-            elif ord(token) == 0x02: # Is in fast motion_detection
-                print('Speed is fast, toggling')
-                dt.write(0x77) # Toggle to slow
-            elif ord(token) == 0x30: # range is 30-80dB
-                print('Range in 30-80 dB, toggling')
-                dt.write(0x40) # Toggle to auto
-            elif ord(token) == 0x4b: # range is 50-100dB
-                dt.write(0x40) # Toggle to auto
-            elif ord(token) == 0x4c: # range is 80-130dB
-                dt.write(0x40) # Toggle to auto
-    else:
-        dt.write(0x55)
-
-
 
 
 ## Set timer
@@ -191,9 +151,6 @@ timer.timeout.connect(refresh_audio_data)
 
 timer2 = QtCore.QTimer()
 timer2.timeout.connect(refresh_camera_data)
-
-timer3 = QtCore.QTimer()
-timer3.timeout.connect(refresh_soundmeter_data)
 
 
 def set_directory():
@@ -215,7 +172,6 @@ def exitHandler():
     # Timers
     timer.stop()
     timer2.stop()
-    timer3.stop()
 
     # Audio
     stream.stop_stream()
@@ -226,22 +182,21 @@ def exitHandler():
     del(camera)
     print('Exiting script')
 
-    # DT
-    dt.write(0x55)  # toggle measurment mode off
-    dt.close()
 
 app.aboutToQuit.connect(exitHandler)
 
 
 
 
+
+
+
 timer.start(sample_time_sec*timer_factor) # in msec
 timer2.start(2*sample_time_sec*timer_factor) # in msec
-timer3.start(10)
 
 ## Display the widget as a new window
-w.show()
-#w.showMaximized()
+#w.show()
+w.showMaximized()
 
 ## Start the Qt event loop
 app.exec_()
