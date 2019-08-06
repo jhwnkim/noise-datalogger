@@ -135,6 +135,9 @@ pdBA.disableAutoRange()
 pdBA.setYRange(30,80, padding=0)
 dtime = np.arange(0, 2*CHUNK, 2)
 
+dBLabel = QtGui.QLabel('Noise Level: ')
+dBLabel.setFont(QtGui.QFont("Arial", 20, QtGui.QFont.Black))
+
 ## Create a grid layout to manage the widgets size and position
 layout = QtGui.QGridLayout()
 w.setLayout(layout)
@@ -151,8 +154,11 @@ row_count = row_count+1
 
 #layout.addWidget(statusbar, 11,0, 1,10)
 
-layout.addWidget(pdBA, row_count, 0, 4, 16)
+layout.addWidget(pdBA, row_count, 0, 4, 14)
+layout.addWidget(dBLabel, row_count, 14, 4,2)
+
 row_count = row_count+4
+
 
 layout.addWidget(pf, row_count, 0, 4, 8) # Plot on right spans 4x8
 row_count = row_count+4
@@ -193,7 +199,7 @@ def refresh_camera_data():
     if ret:
         if np.sum(image) < 100000:
             image = cv2.imread('na.png')
-        
+
         imv.setImage(image.T, autoHistogramRange=False)
     else:
         print('Error reading image')
@@ -235,6 +241,8 @@ def refresh_soundmeter_data():
                 noise_data_buffer.append(noise_data_float)
                 pdBA.plot(noise_data_buffer)
                 pdBA.setXRange(max([0, len(noise_data_buffer)-60]), len(noise_data_buffer))
+
+                dBLabel.setText('Noise Level:\n{} dB'.format(noise_data_float))
             elif ord(token) == 0x02: # Is in fast motion_detection
                 print('Speed is fast mode')
                 # dt.write(0x77) # Toggle to slow
